@@ -1,0 +1,413 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+
+declare_id!("8tUz3PDatBckE2FPAmFx4UUDV59SustzdmcwS7sLpbi1");
+
+#[program]
+pub mod z4_contracts {
+    use super::*;
+
+    // ─── BATCH LOGIC ─────────────────────────────────────────────────
+
+    pub fn create_batch(
+        ctx: Context<CreateBatch>,
+        batch_id: u64,
+        total_units: u64,
+        price_per_unit: u64,
+    ) -> Result<()> {
+        require!(total_units > 0, Z4Error::InvalidUnits);
+        require!(price_per_unit > 0, Z4Error::InvalidPrice);
+
+        let batch = &mut ctx.accounts.batch;
+        batch.batch_id = batch_id;
+        batch.authority = ctx.accounts.authority.key();
+        batch.total_units = total_units;
+        batch.sold_units = 0;
+        batch.price_per_unit = price_per_unit;
+        batch.is_active = true;
+        batch.bump = ctx.bumps.batch;
+
+        emit!(BatchCreated { batch_id, total_units, price_per_unit });
+        msg!("Batch {} dibuat: {} units @ {} lamports", batch_id, total_units, price_per_unit);
+        Ok(())
+    }
+
+    pub fn buy_units(
+        ctx: Context<BuyUnits>,
+        batch_id: u64,
+        amount: u64,
+    ) -> Result<()> {
+        let batch = &mut ctx.accounts.batch;
+
+        require!(batch.is_active, Z4Error::BatchNotActive);
+        require!(amount > 0, Z4Error::InvalidUnits);
+        require!(
+            batch.sold_units + amount <= batch.total_units,
+            Z4Error::InsufficientStock
+        );
+
+        let total_price = batch.price_per_unit
+            .checked_mul(amount)
+            .ok_or(Z4Error::Overflow)?;
+
+        // Transfer SOL dari buyer ke vault (PDA)
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::Transfer {
+                from: ctx.accounts.buyer.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        );
+        anchor_lang::system_program::transfer(cpi_context, total_price)?;
+
+        batch.sold_units += amount;
+
+        let ownership = &mut ctx.accounts.ownership;
+        if ownership.owner == Pubkey::default() {
+            ownership.owner = ctx.accounts.buyer.key();
+            ownership.batch_id = batch_id;
+            ownership.units = 0;
+            ownership.bump = ctx.bumps.ownership;
+        }
+        ownership.units = ownership.units.checked_add(amount).ok_or(Z4Error::Overflow)?;
+
+        // Reward TANI (Contoh: 1 unit = 10 TANI)
+        let tani_reward = amount.checked_mul(10).ok_or(Z4Error::Overflow)?;
+
+        emit!(UnitsPurchased {
+            buyer: ctx.accounts.buyer.key(),
+            batch_id,
+            amount,
+            total_paid: total_price,
+            tani_reward,
+        });
+
+        Ok(())
+    }
+
+    pub fn withdraw(ctx: Context<Withdraw>, batch_id: u64) -> Result<()> {
+        let amount = ctx.accounts.vault.to_account_info().lamports();
+        require!(amount > 0, Z4Error::NoFunds);
+
+        let vault_info = ctx.accounts.vault.to_account_info();
+        let auth_info = ctx.accounts.authority.to_account_info();
+
+        **vault_info.try_borrow_mut_lamports()? -= amount;
+        **auth_info.try_borrow_mut_lamports()? += amount;
+
+        emit!(Withdrawn {
+            authority: ctx.accounts.authority.key(),
+            batch_id,
+            amount,
+        });
+        Ok(())
+    }
+
+    // ─── TANI MINING ───────────────────────────────────────────
+
+    pub fn start_mining(
+        ctx: Context<StartMining>,
+        lock_id: u64,
+        sol_amount: u64,
+        duration_days: u64,
+    ) -> Result<()> {
+        require!(sol_amount >= 100_000_000, Z4Error::InvalidUnits); // min 0.1 SOL
+        require!(
+            duration_days == 30 || duration_days == 90 || duration_days == 180,
+            Z4Error::InvalidDuration
+        );
+
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::Transfer {
+                from: ctx.accounts.miner.to_account_info(),
+                to: ctx.accounts.sol_vault.to_account_info(),
+            },
+        );
+        anchor_lang::system_program::transfer(cpi_context, sol_amount)?;
+
+        let clock = Clock::get()?;
+        let duration_seconds = (duration_days * 24 * 60 * 60) as i64;
+        let tani_reward = calculate_tani_reward(sol_amount, duration_days);
+
+        let mining = &mut ctx.accounts.mining;
+        mining.miner = ctx.accounts.miner.key();
+        mining.lock_id = lock_id;
+        mining.sol_locked = sol_amount;
+        mining.tani_reward = tani_reward;
+        mining.start_time = clock.unix_timestamp;
+        mining.end_time = clock.unix_timestamp + duration_seconds;
+        mining.is_claimed = false;
+        mining.bump = ctx.bumps.mining;
+
+        emit!(MiningStarted {
+            miner: ctx.accounts.miner.key(),
+            lock_id,
+            sol_locked: sol_amount,
+            tani_reward,
+            end_time: mining.end_time,
+        });
+
+        Ok(())
+    }
+
+    pub fn claim_mining(ctx: Context<ClaimMining>, _lock_id: u64) -> Result<()> {
+        let clock = Clock::get()?;
+        let mining = &mut ctx.accounts.mining;
+
+        require!(!mining.is_claimed, Z4Error::AlreadyClaimed);
+        require!(clock.unix_timestamp >= mining.end_time, Z4Error::MiningNotComplete);
+
+        let sol_locked = mining.sol_locked;
+        let tani_reward = mining.tani_reward;
+
+        // Balikin SOL
+        **ctx.accounts.sol_vault.to_account_info().try_borrow_mut_lamports()? -= sol_locked;
+        **ctx.accounts.miner.to_account_info().try_borrow_mut_lamports()? += sol_locked;
+
+        // Transfer TANI Reward pakai PDA Signer
+        let seeds = &[b"tani_authority".as_ref(), &[ctx.bumps.tani_authority]];
+        let signer_seeds = &[&seeds[..]];
+
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.tani_vault.to_account_info(),
+            to: ctx.accounts.miner_tani_account.to_account_info(),
+            authority: ctx.accounts.tani_authority.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+            signer_seeds,
+        );
+        token::transfer(cpi_ctx, tani_reward)?;
+
+        mining.is_claimed = true;
+
+        emit!(MiningClaimed {
+            miner: ctx.accounts.miner.key(),
+            lock_id: mining.lock_id,
+            sol_returned: sol_locked,
+            tani_claimed: tani_reward,
+        });
+
+        Ok(())
+    }
+
+    // ─── NFT CONVERT (LOCKING) ───────────────────────────────────
+
+    pub fn convert_to_nft(
+        ctx: Context<ConvertToNft>,
+        tani_amount: u64,
+        _timestamp: i64, // Digunakan di seeds, harus ada di argumen
+    ) -> Result<()> {
+        require!(tani_amount >= 1_000, Z4Error::InsufficientTani);
+
+        // Lock TANI dari wallet user ke Vault Program
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.user_tani_account.to_account_info(),
+            to: ctx.accounts.tani_lock_vault.to_account_info(),
+            authority: ctx.accounts.user.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts,
+        );
+        token::transfer(cpi_ctx, tani_amount)?;
+
+        let nft_record = &mut ctx.accounts.nft_record;
+        nft_record.owner = ctx.accounts.user.key();
+        nft_record.tani_locked = tani_amount;
+        nft_record.nft_count = tani_amount / 1_000;
+        nft_record.created_at = Clock::get()?.unix_timestamp;
+        nft_record.bump = ctx.bumps.nft_record;
+
+        emit!(NftConverted {
+            owner: ctx.accounts.user.key(),
+            tani_locked: tani_amount,
+            nft_count: nft_record.nft_count,
+        });
+
+        Ok(())
+    }
+}
+
+// ─── HELPER ──────────────────────────────────────────────────────────────
+
+fn calculate_tani_reward(sol_lamports: u64, duration_days: u64) -> u64 {
+    let units = sol_lamports / 100_000_000; // per 0.1 SOL
+    match duration_days {
+        30  => units * 50,
+        90  => units * 200,
+        180 => units * 500,
+        _   => units * 50,
+    }
+}
+
+// ─── DATA STRUCTURES ──────────────────────────────────────────────────────
+
+#[account]
+pub struct BatchAccount {
+    pub batch_id: u64,
+    pub authority: Pubkey,
+    pub total_units: u64,
+    pub sold_units: u64,
+    pub price_per_unit: u64,
+    pub is_active: bool,
+    pub bump: u8,
+}
+
+#[account]
+pub struct OwnershipAccount {
+    pub owner: Pubkey,
+    pub batch_id: u64,
+    pub units: u64,
+    pub bump: u8,
+}
+
+#[account]
+pub struct VaultAccount {}
+
+#[account]
+pub struct MiningAccount {
+    pub miner: Pubkey,
+    pub lock_id: u64,
+    pub sol_locked: u64,
+    pub tani_reward: u64,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub is_claimed: bool,
+    pub bump: u8,
+}
+
+#[account]
+pub struct NftRecord {
+    pub owner: Pubkey,
+    pub tani_locked: u64,
+    pub nft_count: u64,
+    pub created_at: i64,
+    pub bump: u8,
+}
+
+impl BatchAccount { pub const LEN: usize = 8 + 8 + 32 + 8 + 8 + 8 + 1 + 1; }
+impl OwnershipAccount { pub const LEN: usize = 8 + 32 + 8 + 8 + 1; }
+impl MiningAccount { pub const LEN: usize = 8 + 32 + 8 + 8 + 8 + 8 + 8 + 1 + 1; }
+impl NftRecord { pub const LEN: usize = 8 + 32 + 8 + 8 + 8 + 1; }
+
+// ─── CONTEXTS ──────────────────────────────────────────────────────────────
+
+#[derive(Accounts)]
+#[instruction(batch_id: u64)]
+pub struct CreateBatch<'info> {
+    #[account(init, payer = authority, space = BatchAccount::LEN, seeds = [b"batch", batch_id.to_le_bytes().as_ref()], bump)]
+    pub batch: Account<'info, BatchAccount>,
+    #[account(init, payer = authority, space = 8, seeds = [b"vault", batch_id.to_le_bytes().as_ref()], bump)]
+    pub vault: Account<'info, VaultAccount>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(batch_id: u64)]
+pub struct BuyUnits<'info> {
+    #[account(mut, seeds = [b"batch", batch_id.to_le_bytes().as_ref()], bump = batch.bump)]
+    pub batch: Account<'info, BatchAccount>,
+    #[account(init_if_needed, payer = buyer, space = OwnershipAccount::LEN, seeds = [b"ownership", buyer.key().as_ref(), batch_id.to_le_bytes().as_ref()], bump)]
+    pub ownership: Account<'info, OwnershipAccount>,
+    #[account(mut, seeds = [b"vault", batch_id.to_le_bytes().as_ref()], bump)]
+    pub vault: Account<'info, VaultAccount>,
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(batch_id: u64)]
+pub struct Withdraw<'info> {
+    #[account(seeds = [b"batch", batch_id.to_le_bytes().as_ref()], bump = batch.bump, has_one = authority)]
+    pub batch: Account<'info, BatchAccount>,
+    #[account(mut, seeds = [b"vault", batch_id.to_le_bytes().as_ref()], bump)]
+    /// CHECK: PDA Vault
+    pub vault: AccountInfo<'info>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(lock_id: u64)]
+pub struct StartMining<'info> {
+    #[account(init, payer = miner, space = MiningAccount::LEN, seeds = [b"mining", miner.key().as_ref(), lock_id.to_le_bytes().as_ref()], bump)]
+    pub mining: Account<'info, MiningAccount>,
+    #[account(mut, seeds = [b"sol_vault", lock_id.to_le_bytes().as_ref()], bump)]
+    /// CHECK: Vault SOL
+    pub sol_vault: AccountInfo<'info>,
+    #[account(mut)]
+    pub miner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(lock_id: u64)]
+pub struct ClaimMining<'info> {
+    #[account(mut, seeds = [b"mining", miner.key().as_ref(), lock_id.to_le_bytes().as_ref()], bump = mining.bump, has_one = miner)]
+    pub mining: Account<'info, MiningAccount>,
+    #[account(mut, seeds = [b"sol_vault", lock_id.to_le_bytes().as_ref()], bump)]
+    /// CHECK: Vault SOL
+    pub sol_vault: AccountInfo<'info>,
+    #[account(mut)]
+    pub miner_tani_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub tani_vault: Account<'info, TokenAccount>,
+    #[account(seeds = [b"tani_authority"], bump)]
+    /// CHECK: PDA Authority
+    pub tani_authority: AccountInfo<'info>,
+    #[account(mut)]
+    pub miner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(tani_amount: u64, timestamp: i64)] // Memperbaiki error IDL
+pub struct ConvertToNft<'info> {
+    #[account(init, payer = user, space = NftRecord::LEN, seeds = [b"nft_record", user.key().as_ref(), timestamp.to_le_bytes().as_ref()], bump)]
+    pub nft_record: Account<'info, NftRecord>,
+    #[account(mut)]
+    pub user_tani_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub tani_lock_vault: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+// ─── EVENTS & ERRORS ──────────────────────────────────────────────────────
+
+#[event]
+pub struct BatchCreated { pub batch_id: u64, pub total_units: u64, pub price_per_unit: u64 }
+#[event]
+pub struct UnitsPurchased { pub buyer: Pubkey, pub batch_id: u64, pub amount: u64, pub total_paid: u64, pub tani_reward: u64 }
+#[event]
+pub struct Withdrawn { pub authority: Pubkey, pub batch_id: u64, pub amount: u64 }
+#[event]
+pub struct MiningStarted { pub miner: Pubkey, pub lock_id: u64, pub sol_locked: u64, pub tani_reward: u64, pub end_time: i64 }
+#[event]
+pub struct MiningClaimed { pub miner: Pubkey, pub lock_id: u64, pub sol_returned: u64, pub tani_claimed: u64 }
+#[event]
+pub struct NftConverted { pub owner: Pubkey, pub tani_locked: u64, pub nft_count: u64 }
+
+#[error_code]
+pub enum Z4Error {
+    #[msg("Batch tidak aktif")] BatchNotActive,
+    #[msg("Stok tidak cukup")] InsufficientStock,
+    #[msg("Units harus lebih dari 0")] InvalidUnits,
+    #[msg("Harga harus lebih dari 0")] InvalidPrice,
+    #[msg("Tidak ada dana")] NoFunds,
+    #[msg("Overflow")] Overflow,
+    #[msg("Durasi harus 30, 90, atau 180 hari")] InvalidDuration,
+    #[msg("Mining belum selesai")] MiningNotComplete,
+    #[msg("Reward sudah diklaim")] AlreadyClaimed,
+    #[msg("TANI tidak cukup, minimum 1.000 TANI")] InsufficientTani,
+}
