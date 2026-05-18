@@ -1,7 +1,16 @@
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
+import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
+import crypto from "crypto";
 import fs from "fs";
+
+function uuidToBytes(uuid: string): number[] {
+    const hex = uuid.replace(/-/g, "").toLowerCase();
+    if (hex.length !== 32) throw new Error(`Invalid UUID: ${uuid}`);
+    const out: number[] = [];
+    for (let i = 0; i < 32; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+    return out;
+}
 
 async function main() {
     const connection = new anchor.web3.Connection(
@@ -20,45 +29,67 @@ async function main() {
     });
     anchor.setProvider(provider);
 
-    const idl = JSON.parse(
-        fs.readFileSync("./target/idl/z4_contracts.json", "utf-8")
-    );
+    const idl = JSON.parse(fs.readFileSync("./target/idl/z4_contracts.json", "utf-8"));
     const program = new anchor.Program(idl, provider);
 
     const TANI_MINT = new PublicKey("82uRtk77equ3QPbRdkzU7Hu5XKWt5ryAB9nGP8djRwSD");
-    const TANI_TREASURY_WALLET = new PublicKey("8d56NGYEsWiQ3EiqVCF2WAQmTDEyZS5io8q1Q4Ui4XgG");
 
+    // Fill these with a real batch UUID created via scripts/create_batches.ts
+    const batchUuid = process.env.BATCH_UUID;
+    if (!batchUuid) throw new Error("Missing env BATCH_UUID");
+
+    const allocationUuid = crypto.randomUUID();
+    const plotId = "C7";
+    const taniAmount = new anchor.BN(10_000_000_000); // example
+
+    const batchUuidBytes = uuidToBytes(batchUuid);
+    const allocationUuidBytes = uuidToBytes(allocationUuid);
+
+    const [batchState] = PublicKey.findProgramAddressSync(
+        [Buffer.from("batch_state"), Buffer.from(batchUuidBytes)],
+        program.programId
+    );
+    const [batchVault] = PublicKey.findProgramAddressSync(
+        [Buffer.from("batch_vault"), Buffer.from(batchUuidBytes)],
+        program.programId
+    );
+    const [allocationState] = PublicKey.findProgramAddressSync(
+        [Buffer.from("allocation"), Buffer.from(batchUuidBytes), Buffer.from(allocationUuidBytes)],
+        program.programId
+    );
     const [platformConfig] = PublicKey.findProgramAddressSync(
         [Buffer.from("platform_config")],
         program.programId
     );
 
     const userTaniAccount = await getAssociatedTokenAddress(TANI_MINT, keypair.publicKey);
-    const taniTreasuryAccount = await getAssociatedTokenAddress(TANI_MINT, TANI_TREASURY_WALLET);
+    const vaultTaniAccount = await getAssociatedTokenAddress(TANI_MINT, batchVault, true);
 
-    console.log("=== SEBELUM ===");
+    console.log("Batch UUID:", batchUuid);
+    console.log("Allocation UUID:", allocationUuid);
+    console.log("BatchState:", batchState.toString());
+    console.log("AllocationState:", allocationState.toString());
+    console.log("Vault ATA:", vaultTaniAccount.toString());
+
+    console.log("\n=== SEBELUM ===");
     const userTaniBefore = await getAccount(connection, userTaniAccount);
-    const treasuryBefore = await getAccount(connection, taniTreasuryAccount);
+    const vaultBefore = await getAccount(connection, vaultTaniAccount);
     console.log("User TANI:", userTaniBefore.amount.toString());
-    console.log("Treasury TANI:", treasuryBefore.amount.toString());
+    console.log("Vault TANI:", vaultBefore.amount.toString());
 
-    const taniAmount = new anchor.BN(100_000_000_000);
-    const plotId = "C7";
-    const nftId = "Z4-PLOT-C7-" + Date.now().toString();
-
-    console.log("\nAlokasi plot " + plotId + " dengan 100 TANI...");
-    console.log("NFT ID: " + nftId);
-    console.log("Routing: 70 TANI ke Treasury, 30 TANI di-burn");
-
+    console.log(`\nAllocate ${taniAmount.toString()} TANI to batch...`);
     const tx = await program.methods
-        .allocatePlot(plotId, nftId, taniAmount)
+        .allocateToBatch(batchUuidBytes, allocationUuidBytes, plotId, taniAmount)
         .accounts({
+            batchState,
+            allocationState,
+            batchVault,
             platformConfig,
-            user: keypair.publicKey,
             userTaniAccount,
-            taniTreasury: taniTreasuryAccount,
-            taniMint: TANI_MINT,
+            vaultTaniAccount,
+            user: keypair.publicKey,
             tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+            systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([keypair])
         .rpc();
@@ -68,19 +99,9 @@ async function main() {
 
     console.log("\n=== SESUDAH ===");
     const userTaniAfter = await getAccount(connection, userTaniAccount);
-    const treasuryAfter = await getAccount(connection, taniTreasuryAccount);
+    const vaultAfter = await getAccount(connection, vaultTaniAccount);
     console.log("User TANI:", userTaniAfter.amount.toString());
-    console.log("Treasury TANI:", treasuryAfter.amount.toString());
-
-    const taniSpent = BigInt(userTaniBefore.amount) - BigInt(userTaniAfter.amount);
-    const treasuryGain = BigInt(treasuryAfter.amount) - BigInt(treasuryBefore.amount);
-    const burned = taniSpent - treasuryGain;
-
-    console.log("\n=== ROUTING SUMMARY ===");
-    console.log("TANI dipakai:", taniSpent.toString());
-    console.log("Ke Treasury (70%):", treasuryGain.toString());
-    console.log("Di-burn (30%):", burned.toString());
-    console.log("\nAllocation Flow berhasil!");
+    console.log("Vault TANI:", vaultAfter.amount.toString());
 }
 
 main().catch(console.error);

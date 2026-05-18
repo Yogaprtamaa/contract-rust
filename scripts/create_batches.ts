@@ -1,6 +1,44 @@
 import * as anchor from "@coral-xyz/anchor";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
+import {
+    createAssociatedTokenAccountInstruction,
+    getAccount,
+    getAssociatedTokenAddress,
+} from "@solana/spl-token";
+import crypto from "crypto";
 import fs from "fs";
+
+function uuidToBytes(uuid: string): number[] {
+    const hex = uuid.replace(/-/g, "").toLowerCase();
+    if (hex.length !== 32) throw new Error(`Invalid UUID: ${uuid}`);
+    const out: number[] = [];
+    for (let i = 0; i < 32; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+    return out;
+}
+
+async function ensureAtaExists(params: {
+    provider: anchor.AnchorProvider;
+    mint: PublicKey;
+    owner: PublicKey;
+}): Promise<PublicKey> {
+    const connection = params.provider.connection;
+    const payer = params.provider.wallet.publicKey;
+    const ata = await getAssociatedTokenAddress(params.mint, params.owner, true);
+    try {
+        await getAccount(connection, ata);
+        return ata;
+    } catch {
+        const ix = createAssociatedTokenAccountInstruction(
+            payer,
+            ata,
+            params.owner,
+            params.mint
+        );
+        const tx = new anchor.web3.Transaction().add(ix);
+        await params.provider.sendAndConfirm(tx, []);
+        return ata;
+    }
+}
 
 async function main() {
     const connection = new anchor.web3.Connection(
@@ -9,9 +47,8 @@ async function main() {
     );
 
     const keypairFile = fs.readFileSync("/root/.config/solana/id.json", "utf-8");
-    const keypairData = JSON.parse(keypairFile);
     const keypair = anchor.web3.Keypair.fromSecretKey(
-        Uint8Array.from(keypairData)
+        Uint8Array.from(JSON.parse(keypairFile))
     );
 
     const wallet = new anchor.Wallet(keypair);
@@ -20,66 +57,64 @@ async function main() {
     });
     anchor.setProvider(provider);
 
-    const idl = JSON.parse(
-        fs.readFileSync("./target/idl/z4_contracts.json", "utf-8")
-    );
-
-    const programId = new PublicKey("8tUz3PDatBckE2FPAmFx4UUDV59SustzdmcwS7sLpbi1");
+    const idl = JSON.parse(fs.readFileSync("./target/idl/z4_contracts.json", "utf-8"));
     const program = new anchor.Program(idl, provider);
 
+    // NOTE: ideally read this from PlatformConfig, but keeping explicit here.
+    const TANI_MINT = new PublicKey("82uRtk77equ3QPbRdkzU7Hu5XKWt5ryAB9nGP8djRwSD");
+
+    const batchUuid = crypto.randomUUID();
+    const plotId = "C7";
+    const targetTaniAtomic = new anchor.BN(100_000_000_000); // example
+    const minFundedPct = 70;
+    const endTime = new anchor.BN(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
+
+    const batchUuidBytes = uuidToBytes(batchUuid);
+    const [batchStatePda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("batch_state"), Buffer.from(batchUuidBytes)],
+        program.programId
+    );
+    const [batchVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("batch_vault"), Buffer.from(batchUuidBytes)],
+        program.programId
+    );
+    const [platformConfig] = PublicKey.findProgramAddressSync(
+        [Buffer.from("platform_config")],
+        program.programId
+    );
+
     console.log("Admin wallet:", keypair.publicKey.toString());
-    console.log("Program ID:", programId.toString());
+    console.log("Batch UUID:", batchUuid);
+    console.log("BatchState PDA:", batchStatePda.toString());
+    console.log("BatchVault PDA:", batchVaultPda.toString());
 
-    const batches = [
-        { id: 1, totalUnits: 40000, pricePerUnit: 0.01 },
-        { id: 2, totalUnits: 40000, pricePerUnit: 0.01 },
-        { id: 3, totalUnits: 40000, pricePerUnit: 0.01 },
-    ];
+    console.log("\nCreating batch...");
+    const tx = await program.methods
+        .createBatch(batchUuidBytes, plotId, targetTaniAtomic, minFundedPct, endTime)
+        .accounts({
+            batchState: batchStatePda,
+            batchVault: batchVaultPda,
+            platformConfig,
+            authority: keypair.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([keypair])
+        .rpc();
 
-    for (const batch of batches) {
-        const batchId = new anchor.BN(batch.id);
-        const totalUnits = new anchor.BN(batch.totalUnits);
-        const pricePerUnit = new anchor.BN(
-            batch.pricePerUnit * anchor.web3.LAMPORTS_PER_SOL
-        );
+    console.log("Tx:", tx);
+    console.log(`Explorer: https://explorer.solana.com/tx/${tx}?cluster=devnet`);
 
-        const [batchPDA] = PublicKey.findProgramAddressSync(
-            [Buffer.from("batch"), batchId.toArrayLike(Buffer, "le", 8)],
-            programId
-        );
-
-        const [vaultPDA] = PublicKey.findProgramAddressSync(
-            [Buffer.from("vault"), batchId.toArrayLike(Buffer, "le", 8)],
-            programId
-        );
-
-        console.log(`\nMembuat Batch ${batch.id}...`);
-        console.log("Batch PDA:", batchPDA.toString());
-        console.log("Vault PDA:", vaultPDA.toString());
-
-        try {
-            const tx = await program.methods
-                .createBatch(batchId, totalUnits, pricePerUnit)
-                .accounts({
-                    batch: batchPDA,
-                    vault: vaultPDA,
-                    authority: keypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([keypair])
-                .rpc();
-
-            console.log(`Batch ${batch.id} berhasil!`);
-            console.log("Tx:", tx);
-            console.log(`Explorer: https://explorer.solana.com/tx/${tx}?cluster=devnet`);
-        } catch (err) {
-            console.error(`Error batch ${batch.id}:`, err);
-        }
-    }
+    console.log("\nEnsuring vault ATA exists...");
+    const vaultAta = await ensureAtaExists({ provider, mint: TANI_MINT, owner: batchVaultPda });
+    console.log("Vault ATA:", vaultAta.toString());
 
     console.log("\n========================================");
-    console.log("Semua batch selesai!");
+    console.log("BATCH CREATED");
     console.log("========================================");
+    console.log(`BATCH_UUID=${batchUuid}`);
+    console.log(`BATCH_STATE_PDA=${batchStatePda.toString()}`);
+    console.log(`BATCH_VAULT_PDA=${batchVaultPda.toString()}`);
+    console.log(`BATCH_VAULT_ATA=${vaultAta.toString()}`);
 }
 
 main().catch(console.error);

@@ -46,6 +46,31 @@ async function main() {
     const saleInventoryAccount = await getAssociatedTokenAddress(TANI_MINT, SALE_INVENTORY_WALLET);
     const usdtTreasuryAccount = await getAssociatedTokenAddress(USDT_MINT, USDT_TREASURY_WALLET);
 
+    // Create ATAs if they don't exist yet
+    const ixs: anchor.web3.TransactionInstruction[] = [];
+    for (const { mint, ata } of [
+        { mint: USDT_MINT, ata: buyerUsdtAccount },
+        { mint: TANI_MINT, ata: buyerTaniAccount },
+    ]) {
+        try {
+            await getAccount(connection, ata);
+        } catch {
+            ixs.push(
+                createAssociatedTokenAccountInstruction(
+                    keypair.publicKey,
+                    ata,
+                    keypair.publicKey,
+                    mint
+                )
+            );
+        }
+    }
+    if (ixs.length > 0) {
+        const setupTx = new anchor.web3.Transaction().add(...ixs);
+        const sig = await provider.sendAndConfirm(setupTx, [keypair]);
+        console.log("Created missing ATAs:", sig);
+    }
+
     // Cek saldo sebelum
     console.log("=== SEBELUM ===");
     try {
@@ -53,8 +78,10 @@ async function main() {
         console.log("Buyer TANI:", buyerTani.amount.toString());
     } catch { console.log("Buyer TANI account belum ada"); }
 
-    const buyerUsdt = await getAccount(connection, buyerUsdtAccount);
-    console.log("Buyer USDT:", buyerUsdt.amount.toString());
+    try {
+        const buyerUsdt = await getAccount(connection, buyerUsdtAccount);
+        console.log("Buyer USDT:", buyerUsdt.amount.toString());
+    } catch { console.log("Buyer USDT account belum ada atau kosong"); }
 
     // Beli 10 USDT worth of TANI (= 100 TANI karena rate 10:1)
     // USDT 6 desimal: 10 USDT = 10_000_000
