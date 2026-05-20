@@ -11,33 +11,14 @@ pub struct TokenSaleEvent {
     pub timestamp: i64,
 }
 
-/// Emitted on every successful allocation (beli plot NFT).
-/// BE blockchain/listener.rs subscribes to this → inserts/updates allocations table.
+/// Emitted when a referral bonus is paid out.
+/// referrer mendapat 5% dari usdt_amount pembelian.
 #[event]
-pub struct AllocationEvent {
-    pub wallet: Pubkey,
-    pub batch_id: String,       // UUID canonical format (8-4-4-4-12)
-    pub allocation_id: String,  // UUID canonical format (8-4-4-4-12)
-    pub tani_spent: u64,
-    pub timestamp: i64,
-}
-
-/// Emitted when a batch is finalized (success or failed).
-#[event]
-pub struct BatchFinalizedEvent {
-    pub batch_id: String,
-    pub result: String,     // "success" | "failed"
-    pub funded_pct: u8,
-    pub funded_tani: u64,
-    pub timestamp: i64,
-}
-
-/// Emitted when a user claims a refund from a failed batch.
-#[event]
-pub struct RefundClaimedEvent {
-    pub wallet: Pubkey,
-    pub batch_id: String,
-    pub allocation_id: String,
-    pub tani_refunded: u64,
+pub struct ReferralEvent {
+    pub buyer: Pubkey,
+    pub referrer: Pubkey,
+    pub usdt_amount: u64,       // total pembelian buyer
+    pub referral_bonus: u64,    // 5% dari usdt_amount → ke referrer
+    pub tani_received: u64,
     pub timestamp: i64,
 }

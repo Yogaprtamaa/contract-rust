@@ -27,7 +27,7 @@ async function main() {
 
     const TANI_MINT = new PublicKey("82uRtk77equ3QPbRdkzU7Hu5XKWt5ryAB9nGP8djRwSD");
     const SALE_INVENTORY_WALLET = new PublicKey("9sanq7Ysku7ND2bidsHDFH6d36J7jt3fGZqo3LPBQ1U6");
-    const PROGRAM_ID = new PublicKey("8tUz3PDatBckE2FPAmFx4UUDV59SustzdmcwS7sLpbi1");
+    const PROGRAM_ID = new PublicKey("9AShqzX8Y1uHDHxuhUvd6ojTwFa2BiBKPKHMSBSmV8MJ");
 
     const [saleAuthority] = PublicKey.findProgramAddressSync(
         [Buffer.from("sale_authority")],

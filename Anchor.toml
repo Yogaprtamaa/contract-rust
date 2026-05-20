@@ -1,19 +1,22 @@
 [toolchain]
+anchor_version = "0.32.1"
 package_manager = "yarn"
 
 [features]
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-z4_contracts = "8tUz3PDatBckE2FPAmFx4UUDV59SustzdmcwS7sLpbi1"
+[programs.devnet]
+z4_contracts = "9AShqzX8Y1uHDHxuhUvd6ojTwFa2BiBKPKHMSBSmV8MJ"
 
-[registry]
-url = "https://api.apr.dev"
+[programs.localnet]
+z4_contracts = "9AShqzX8Y1uHDHxuhUvd6ojTwFa2BiBKPKHMSBSmV8MJ"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+[hooks]

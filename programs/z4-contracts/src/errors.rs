@@ -12,33 +12,9 @@ pub enum Z4Error {
     #[msg("Token Sale sedang tidak aktif")]
     TokenSaleInactive,
 
-    // Batch
-    #[msg("Batch tidak dalam status open")]
-    BatchNotOpen,
-    #[msg("Batch sudah berakhir")]
-    BatchExpired,
-    #[msg("Batch belum berakhir")]
-    BatchNotEnded,
-    #[msg("Jumlah NFT tidak valid")]
-    InvalidNftQuantity,
-    #[msg("Kapasitas batch tidak cukup")]
-    InsufficientBatchCapacity,
-    #[msg("Batch belum mencapai target")]
-    BatchTargetNotMet,
-    #[msg("Batch sudah gagal")]
-    BatchFailed,
-    #[msg("Batch belum gagal")]
-    BatchNotFailed,
-    #[msg("Receipt sudah diklaim")]
-    ReceiptAlreadyClaimed,
-    #[msg("Batch sudah di-finalize")]
-    BatchAlreadyFinalized,
-
-    // Allocation
-    #[msg("Saldo $TANI tidak cukup")]
-    InsufficientTani,
-    #[msg("Allocation sedang tidak aktif")]
-    AllocationInactive,
+    // Referral
+    #[msg("Tidak bisa mereferral diri sendiri")]
+    SelfReferral,
 
     // General
     #[msg("Overflow kalkulasi")]

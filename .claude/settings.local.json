@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///wsl.localhost/Ubuntu/root/z4/**)",
+      "Bash(/dev/null find:*)",
+      "Read(///wsl.localhost/Ubuntu/root/z4/z4-fe/**)",
+      "Read(///wsl.localhost/Ubuntu/root/z4/z4-fe/src/**)",
+      "Bash(solana address:*)",
+      "Read(//c/Users/reona/.config/solana/**)",
+      "Read(///wsl.localhost/Ubuntu/root/.config/**)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Bash(echo -n \"$f: \")",
+      "Bash(solana-keygen pubkey:*)",
+      "Bash(done)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''version:'''', d.get\\(''''version''''\\)\\); print\\(''''instructions:'''', [i[''''name''''] for i in d[''''instructions'''']]\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''instructions:'''', [i[''''name''''] for i in d[''''instructions'''']]\\)\")",
+      "Read(///wsl.localhost/Ubuntu/root/clonez4/**)",
+      "Bash(anchor build:*)",
+      "Bash(cargo check:*)",
+      "Bash(CARGO_INCREMENTAL=0 cargo check -p z4-contracts)",
+      "Bash(python3 -c \"import sys,json,base58; data=json.load\\(sys.stdin\\); from solders.keypair import Keypair; kp=Keypair.from_bytes\\(bytes\\(data\\)\\); print\\(''''Main wallet:'''', kp.pubkey\\(\\)\\)\")",
+      "Bash(solana balance:*)",
+      "Bash(node:*)",
+      "Bash(cargo build-sbf:*)",
+      "Read(///wsl.localhost/Ubuntu/root/**)",
+      "Read(///wsl.localhost/Ubuntu//**)",
+      "Bash(wslpath -u \"\\\\wsl.localhost\\\\Ubuntu\\\\root\\\\clonez4\\\\z4-contracts\")",
+      "Bash(wsl:*)"
+    ]
+  }
+}

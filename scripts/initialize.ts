@@ -32,7 +32,6 @@ async function main() {
     // Wallet addresses
     const SALE_INVENTORY_WALLET = new PublicKey("9sanq7Ysku7ND2bidsHDFH6d36J7jt3fGZqo3LPBQ1U6");
     const USDT_TREASURY_WALLET  = new PublicKey("87czwMnrc8KzvLpa5QE5VyZ4SYs4SmB2X667rWw8yec1");
-    const TANI_TREASURY_WALLET  = new PublicKey("8d56NGYEsWiQ3EiqVCF2WAQmTDEyZS5io8q1Q4Ui4XgG");
 
     // Token accounts
     const saleInventoryTokenAccount = await getAssociatedTokenAddress(
@@ -40,9 +39,6 @@ async function main() {
     );
     const usdtTreasuryTokenAccount = await getAssociatedTokenAddress(
         USDT_MINT, USDT_TREASURY_WALLET
-    );
-    const taniTreasuryTokenAccount = await getAssociatedTokenAddress(
-        TANI_MINT, TANI_TREASURY_WALLET
     );
 
     // Derive PlatformConfig PDA
@@ -55,10 +51,9 @@ async function main() {
     console.log("PlatformConfig PDA:", platformConfig.toString());
     console.log("Sale Inventory Token Account:", saleInventoryTokenAccount.toString());
     console.log("USDT Treasury Token Account:", usdtTreasuryTokenAccount.toString());
-    console.log("TANI Treasury Token Account:", taniTreasuryTokenAccount.toString());
 
-    // Rate: 10 TANI per 1 USDT
-    const TANI_PER_USDT = new anchor.BN(10);
+    // Rate: 17 = 1.7 TANI per 1 USDT (1 TANI = Rp 10.000, kurs 1 USDT = Rp 17.000)
+    const TANI_PER_USDT = new anchor.BN(17);
 
     console.log("\nInitializing Z4 Platform...");
 
@@ -71,7 +66,6 @@ async function main() {
             usdtMint: USDT_MINT,
             saleInventory: saleInventoryTokenAccount,
             usdtTreasury: usdtTreasuryTokenAccount,
-            taniTreasury: taniTreasuryTokenAccount,
             systemProgram: anchor.web3.SystemProgram.programId,
         })
         .signers([keypair])
