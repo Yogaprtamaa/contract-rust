@@ -17,12 +17,19 @@
 
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
+import * as dotenv from "dotenv";
 import fs from "fs";
+
+dotenv.config();
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const TANI_PRICE_IDR = 10_000;   // fixed IDR price of 1 TANI
-const KEYPAIR_PATH   = "/root/.config/solana/id.json";
-const RPC_URL        = "https://api.devnet.solana.com";
+const KEYPAIR_PATH   = process.env.KEYPAIR_PATH   ?? "/root/.config/solana/id.json";
+const RPC_URL        = process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
+
+if (!process.env.SOLANA_RPC_URL) {
+    console.warn("⚠️  SOLANA_RPC_URL not set in .env — falling back to public devnet RPC");
+}
 
 // ── Fetch USD/IDR rate ───────────────────────────────────────────────────────
 
