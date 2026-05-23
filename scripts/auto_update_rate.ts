@@ -41,7 +41,7 @@ async function main() {
     // 1. Fetch live rate
     const idrPerUsd = await fetchUsdIdr();
     const realRate  = idrPerUsd / TANI_PRICE_IDR;        // e.g. 1.7674
-    const newRate   = Math.round(realRate * 10);          // e.g. 18  (×10 scale)
+    const newRate   = Math.floor(realRate * 10);          // e.g. 17  (floor = never undersell)
     console.log(`USD/IDR          : ${idrPerUsd.toFixed(2)}`);
     console.log(`TANI price (IDR) : Rp ${TANI_PRICE_IDR.toLocaleString()}`);
     console.log(`Real rate        : ${realRate.toFixed(4)} TANI/USDT`);
