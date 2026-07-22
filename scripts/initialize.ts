@@ -52,8 +52,8 @@ async function main() {
     console.log("Sale Inventory Token Account:", saleInventoryTokenAccount.toString());
     console.log("USDT Treasury Token Account:", usdtTreasuryTokenAccount.toString());
 
-    // Rate: 17 = 1.7 TANI per 1 USDT (1 TANI = Rp 10.000, kurs 1 USDT = Rp 17.000)
-    const TANI_PER_USDT = new anchor.BN(17);
+    // Rate: 53 = 5.3 TANI per 1 USDT (1 TANI = Rp 3.333, kurs 1 USDT = Rp 17.900)
+    const TANI_PER_USDT = new anchor.BN(53);
 
     console.log("\nInitializing Z4 Platform...");
 

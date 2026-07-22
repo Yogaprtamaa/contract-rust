@@ -10,7 +10,7 @@ pub fn handler(ctx: Context<BuyTani>, usdt_amount: u64) -> Result<()> {
     require!(config.token_sale_active, Z4Error::TokenSaleInactive);
     require!(usdt_amount > 0, Z4Error::InvalidUsdtAmount);
 
-    // tani_per_usdt disimpan dalam skala ×10 (contoh: 17 = 1.7 TANI/USDT)
+    // tani_per_usdt disimpan dalam skala ×10 (contoh: 51 = 5.1 TANI/USDT)
     // Formula: usdt_raw × rate × 100 = tani_raw (6 desimal USDT → 9 desimal TANI, dibagi 10 dari skala)
     let tani_amount = usdt_amount
         .checked_mul(config.tani_per_usdt)
